@@ -1,0 +1,21 @@
+export default {
+  'active-directory': 'Active Directory',
+  'brute-force': 'Brute Force',
+  'common-services': 'Common Services',
+  'cross-site-scripting': 'Cross-Site Scripting',
+  documentation: 'Documentation',
+  'file-inclusion': 'File Inclusion',
+  'file-transfers': 'File Transfers',
+  'information-gathering': 'Information Gathering',
+  'linux-privilege-escalation': 'Linux Privilege Escalation',
+  metasploit: 'Metasploit',
+  nmap: 'Nmap',
+  'password-attacks': 'Password Attacks',
+  pivoting: 'Pivoting',
+  'shells-and-payloads': 'Shells & Payloads',
+  'sql-injections': 'SQL Injections',
+  'web-attacks': 'Web Attacks',
+  'web-enumeration': 'Web Enumeration',
+  'web-proxies': 'Web Proxies',
+  'windows-privilege-escalation': 'Windows Privilege Escalation'
+}
