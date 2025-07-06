@@ -13,11 +13,69 @@ This is not a declaration of a "perfect" or "best" way to code. Instead, it repr
 
 ## Project Structure & Setup
 
-_This section will detail project templates, directory layouts, and dependency management using tools like Poetry._
+A robust and reproducible project setup is the foundation of any serious software endeavor. This section documents a modern, high-performance toolkit designed to ensure code quality, consistency, and developer productivity.
+
+### Core Tooling
+
+Our setup standardizes on a few key tools to handle the most critical aspects of the development lifecycle: dependency management, formatting, linting, and type checking.
+
+- **Package and Environment Manager: `uv`** 📦
+  We use **`uv`** as our primary tool for managing Python packages and virtual environments. Developed by Astral (the creators of `ruff`), `uv` is an extremely fast, all-in-one project and package manager written in Rust. It replaces the need for separate tools like `pip`, `venv`, `pip-tools`, and in many cases, `conda`. Its speed and modern feature set make it an ideal choice for new projects.
+
+  - **Official Link**: [uv Documentation](https://github.com/astral-sh/uv)
+
+- **Linter and Formatter: `ruff`** 🎨
+  For code linting and formatting, we rely exclusively on **`ruff`**. It is an incredibly fast linter and formatter that can replace a multitude of older tools like Black, isort, Flake8, and Pyupgrade. By combining these functions into a single, cohesive tool, `ruff` simplifies configuration and dramatically speeds up CI/CD pipelines and local development workflows.
+
+- **Static Type Checker: `mypy`** 🔍
+  To enforce type safety and catch potential bugs before runtime, we use **`mypy`**. By adding static type hints to our code and running `mypy` to check them, we create more robust, self-documenting, and maintainable software. While `pyright` is another excellent option, our current setup is standardized on `mypy`.
+
+### Automation and Workflow
+
+To ensure these tools are used consistently, we automate our workflow using `pre-commit` for quality gates and `invoke` for task management.
+
+- **Automated Quality Gates: `pre-commit`**
+  We use the `pre-commit` framework to run our quality checks automatically before any code is committed. This prevents common errors from ever entering the codebase. Our `.pre-commit-config.yaml` is configured to:
+
+  - Format and lint all Python code with **`ruff`**.
+  - Run static type analysis with **`mypy`**.
+  - Check for large files, merge conflicts, and YAML syntax errors.
+  - Fix trailing whitespace and file endings.
+  - Clear output from Jupyter Notebooks to keep version control clean.
+  - Check for spelling errors with `codespell`.
+  - Validate the `pyproject.toml` file structure.
+
+- **Task Automation: `invoke`**
+  The `tasks.py` file, powered by **`invoke`**, serves as our command-line interface for common development tasks. It provides simple, memorable commands to abstract away complex underlying logic. The current implementation automates:
+  - **Environment Setup**: A `prepare` task that detects or installs a Python distribution (currently via Miniforge/Conda) and sets up the project environment.
+  - **Running Checks**: Tasks to manually trigger `mypy`, `pytest`, and `pre-commit`.
+  - **Development Services**: Commands to easily start JupyterLab and the MLflow tracking server with the correct configurations.
+  - **Running Applications**: Shortcuts for launching training scripts and experiments.
+
+### Future Directions: Templates and Monorepos
+
+This setup is a great starting point, and we plan to evolve it.
+
+- **Project Templates**
+  A valuable next step is to create standardized project templates. We could have different templates for various use cases, such as:
+
+  - `script`: A minimal template for a standalone Python script.
+  - `app`: A more complex template for a web application or service, including boilerplate for APIs and Docker.
+  - `ml-project`: A template for a machine learning project with predefined directories for data, notebooks, and models.
+
+- **Monorepo Architecture with `uv`**
+  While the current `tasks.py` leverages `conda`, the long-term vision is to fully embrace `uv` for both standalone projects and complex monorepos.
+
+  - **Is `uv` good for monorepos?** Yes. `uv` is an excellent choice for monorepos. It respects Python's packaging standards and integrates perfectly with `pyproject.toml` [workspaces](https://peps.python.org/pep-0660/), allowing you to manage multiple local, interdependent packages seamlessly.
+  - **Replacing Conda**: We can replace the Conda-based environment logic in `tasks.py` with `uv`. The workflow would look like this:
+    1.  `uv venv`: Create a virtual environment.
+    2.  `uv pip sync pyproject.toml`: Install all project dependencies defined in `pyproject.toml` into the environment. This single command installs dependencies from all packages within the monorepo workspace.
+
+  This approach would give us a faster, more modern, and more standards-compliant workflow that aligns perfectly with the rest of our chosen toolkit.
 
 ## Tooling for Code Quality
 
-_This section will cover linters and formatters like Ruff, static type checkers like mypy, and automation with pre-commit hooks._
+_This section will cover linters, formatters, and automation tools like pre-commit hooks._
 
 ## Testing Environment
 
