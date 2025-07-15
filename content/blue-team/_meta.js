@@ -1,7 +1,6 @@
 export default {
-  'incident-handling': 'Incident Handling Process',
-  'siem-fundamentals': 'Security Monitoring & SIEM Fundamentals',
-  'windows-event-logs': 'Windows Event Logs & Finding Evil',
+  'siem-fundamentals': 'Elastic Stack & Kibana',
+  'windows-event-logs': 'Windows Event Logs',
   'threat-hunting': 'Intro to Threat Hunting & Hunting With Elastic',
   'splunk': 'Understanding Log Sources & Investigating with Splunk',
   'windows-attacks-vs-defense': 'Windows Attacks & Defense',
