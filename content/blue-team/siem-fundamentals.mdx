@@ -4,4 +4,209 @@ sidebarTitle: Security Monitoring & SIEM Fundamentals
 description: Principles of security monitoring and the basics of Security Information and Event Management (SIEM).
 ---
 
+# Security Monitoring with the Elastic Stack
+
+This document contains essential, notes for using the Elastic Stack in security monitoring. The focus is on practical application for passing exams and solving challenges.
+
+---
+
+## 1. Elastic Stack: Core Components & Architecture
+
+### Core Components
+
+A quick-reference for the main parts of the stack:
+
+* **Elasticsearch**: The brain. It stores, indexes, and searches all the data.
+* **Logstash**: The pipeline. It collects data from various sources, transforms it (e.g., normalizing), and sends it to Elasticsearch.
+* **Kibana**: The face. It's the web interface you use to search, visualize, and analyze data with dashboards. **This is your primary tool.**
+* **Beats**: The collectors. Lightweight agents installed on servers/endpoints to ship data (e.g., logs, metrics) to Logstash or Elasticsearch.
+
+### Data Flow Architecture
+
+There are two common patterns for getting data into the stack:
+
+1.  **For simple collection and forwarding:**
+    `Beats -> Elasticsearch -> Kibana`
+
+2.  **When data needs transformation or enrichment:**
+    `Beats -> Logstash -> Elasticsearch -> Kibana`
+
+---
+
+## 2. KQL (Kibana Query Language) Fundamentals
+
+KQL is how you search for data in Kibana. Master this syntax.
+
+| Syntax               | Description                                                                  | Example                                                |
+| :------------------- | :--------------------------------------------------------------------------- | :----------------------------------------------------- |
+| **Field Search** | The core of KQL. `field:value`.                                              | `event.code:4625`                                      |
+| **Free Text Search** | Searches for a value across all indexed fields.                              | `"svc-sql1"`                                           |
+| **Logical AND** | Requires both conditions to be true.                                         | `event.code:4625 AND user.name:"administrator"`        |
+| **Logical OR** | Requires either condition to be true.                                        | `user.name:"guest" OR user.name:"temp"`                |
+| **Logical NOT** | Excludes records that match the condition.                                   | `NOT source.ip:"10.0.1.5"`                             |
+| **Greater Than** | `field:>value`. Also available: `>=` (greater or equal).                     | `source.bytes > 4000`                                  |
+| **Less Than** | `field:<value`. Also available: `<=` (less or equal).                         | `@timestamp < "2023-03-03T00:00:00.000Z"`               |
+| **Wildcard** | Use `*` to match any number of characters.                                   | `user.name:admin*` (matches admin, administrator, etc) |
+| **Grouping** | Use `()` to combine expressions and control logic.                           | `(process.name:powershell.exe OR process.name:cmd.exe) AND NOT user.name:system` |
+
+
+---
+
+
+## 3. The Elastic Common Schema (ECS)
+
+ECS is a standard naming scheme for fields. Understanding it is critical for writing effective, reusable queries.
+
+**Actionable Rule**: When writing queries, **always prefer the ECS field** (e.g., `event.code`, `source.ip`, `user.name`) over a beat-specific field (e.g., `winlog.event_id`). ECS fields work across all data sources (Windows, Linux, Firewalls), making your queries universal.
+
+### Common ECS & Beat Fields Reference
+
+This table is a quick reference for fields you've encountered. Use the `.keyword` suffix when grouping/aggregating in visualizations (e.g., `user.name.keyword`).
+
+| Category | Field Name | Description |
+| :--- | :--- | :--- |
+| **General** | `@timestamp` | When the event was processed by the Elastic Stack. |
+| | `event.created` | When the event originally occurred on the source machine. Often more accurate. |
+| **Event** | `event.code` | The identifier for a specific event type (e.g., `4625`). |
+| | `event.action` | The activity performed (e.g., `member-added-to-security-group`). |
+| **Host** | `host.hostname` | The name of the machine where the event occurred. |
+| **User** | `user.name` | The name of the user involved in the event. |
+| | `group.name` | The name of the security group involved. |
+| **Network** | `source.ip` | Source IP address. |
+| | `source.bytes` | Size of data from the source. |
+| | `destination.ip` | Destination IP address. |
+| | `related.ip` | An IP address related to the event, often the source of an RDP logon. |
+| **Process** | `process.name` | The name of the process (e.g., `powershell.exe`). |
+| **Winlogbeat** | `winlog.logon.type` | The logon method (e.g., `RemoteInteractive` for RDP). |
+| | `winlog.event_data.SubStatus` | The reason code for a failed logon. |
+| | `winlog.event_data.MemberSid`| The Security Identifier (SID) of a user added/removed from a group. |
+
+---
+
+## 4. Key Security Identifiers & Fields
+
+### Common Windows Event Codes (`event.code`)
+
+| Event Code | Event Name | Why it's important |
+| :--- | :--- | :--- |
+| **4624** | An account was successfully logged on | Track successful logons, identify unusual RDP or service account usage. |
+| **4625** | An account failed to log on | **Key indicator** for brute-force or password-guessing attacks. |
+| **4732** | Member added to security-enabled group | Crucial for tracking **privilege escalation**. |
+| **4733** | Member removed from security-enabled group | Track privilege changes. |
+| **4688** | A new process has been created | Track command-line activity and malicious software execution. |
+
+### Windows Logon Sub-Status Codes (`winlog.event_data.SubStatus`)
+
+When an `event.code:4625` (logon failure) occurs, this code tells you **why** it failed.
+
+| Sub-Status Code | Reason | Why it's important |
+| :--- | :--- | :--- |
+| **0xc000006a** | Incorrect user name or password | High volume can indicate brute-forcing. |
+| **0xc0000072** | Account is disabled | An attacker may be trying to use a known but disabled account. **Highly suspicious.** |
+| **0xc0000234** | Account is locked out | Indicates a brute-force attempt likely already happened. |
+| **0xc0000064** | Account does not exist | Someone is guessing usernames. |
+
+---
+
+## 5. Creating Visualizations in Kibana
+
+Dashboards are containers for your visualizations (charts, tables, etc.).
+
+### General Workflow for a Table Visualization
+
+1.  **Navigate & Create**: Go to **Dashboard** -> **Create new dashboard** -> **Create visualization**.
+2.  **Set Scope**:
+    * **Time Range**: Click the calendar icon. For initial exploration, set an absolute range or "Last 15 years" to see all data.
+    * **Index Pattern**: Select the correct data source, e.g., `windows*`.
+3.  **Choose Type**: Select **Table** from the visualization type dropdown.
+4.  **Define Data**:
+    * **Metrics (The 'What')**: This is the calculation. For counting events, click **Metrics** and select **Count**.
+    * **Buckets / Rows (The 'How')**: This is how you group the data. Click **Rows** and add the fields you want to group by. **Crucially, use the `.keyword` version of a field for aggregation** (e.g., `user.name.keyword`, not `user.name`).
+5.  **Filter Data**: Use the main **KQL search bar** or the **Add Filter** button to narrow your data to specific events (e.g., `event.code:4625`).
+6.  **Refine & Save**:
+    * You can edit row settings to add a **Custom label** (to rename a column) or change the sorting.
+    * Click **Save and return** to add the visualization to the dashboard.
+    * Finally, **Save** the dashboard itself.
+
+### Practical Visualization Recipes
+
+Use the workflow above with the following "ingredients" to create common security visualizations.
+
+| Goal | Filters & KQL | Rows (Group By) |
+| :--- | :--- | :--- |
+| **Failed Logons (All Users)** | `event.code:4625` <br/> KQL: `NOT user.name: *$` (to exclude computer accounts) | `user.name.keyword` <br/> `host.hostname.keyword` <br/> `winlog.logon.type.keyword` |
+| **Failed Logons (Disabled Users)** | `event.code:4625` <br/> `winlog.event_data.SubStatus:"0xc0000072"` | `user.name.keyword` <br/> `host.hostname.keyword` |
+| **Suspicious RDP from Service Accounts** | `event.code:4624` <br/> `winlog.logon.type:"RemoteInteractive"` <br/> KQL: `user.name:svc-*` | `user.name.keyword` <br/> `host.hostname.keyword` <br/> `related.ip` |
+| **Privilege Changes (Local Admins)** | `event.code:(4732 OR 4733)` <br/> `group.name:"Administrators"` <br/> Use **Time Picker** for specific date ranges. | `event.action.keyword` <br/> `user.name.keyword` <br/> `winlog.event_data.MemberSid.keyword` <br/> `host.hostname.keyword` |
+
+
+## 6. Alert Triaging & Decision Making
+
+### The 4-Step Triaging Workflow
+
+1.  **Review**: What does the alert literally say? Check the user, host, source/destination IPs, and the rule that triggered it.
+2.  **Contextualize**: Does this make sense for our environment? Compare the alert against what you know is normal (e.g., from the senior analyst's notes). Is it a known behavior?
+3.  **Assess**: How bad is this? Is it a minor policy violation or a potential compromise of a critical system?
+4.  **Act**: Based on your assessment, choose your path: resolve, consult, or escalate.
+
+### Decision Guide: When to Choose What
+
+Use these rules of thumb to make your decision.
+
+#### 🧐 When to "Consult with IT Operations"
+
+Choose this path when an activity **violates policy but isn't an obvious attack**. You need more information to rule out a false positive or a legitimate (but non-compliant) action by the IT team.
+
+* **Your Goal**: Ask "Did you do this?" before sounding a major alarm.
+* **Example 1: Admin logon not from PAW.** The alert shows an admin logged on from a regular workstation. Your notes say this shouldn't happen, but also that "the IT operation team often tends to use the default administrator account(s) even if they are told otherwise."
+    * **Action**: **Consult.** This is a known bad habit. Ask the IT team to verify their activity before escalating.
+* **Example 2: User added to "Administrators" group.** This is a major privilege change. It could be a legitimate user promotion or an attacker escalating privileges.
+    * **Action**: **Consult.** Ask IT Operations: "Did you intentionally add this person to the Administrators group?" If they say "No," you escalate immediately.
+
+#### 🚨 When to "Escalate to a Tier 2/3 Analyst"
+
+Choose this path for activity that is **highly suspicious, explicitly forbidden by security controls, or indicates an active compromise.** This requires immediate, deeper investigation.
+
+* **Your Goal**: Get expert eyes on a potential incident right away.
+* **Example 1: RDP logon from a service account.** Your notes say service accounts (`-svc`) should **never** be used for interactive logon. This is a direct violation of a security control and a huge red flag for credential misuse.
+    * **Action**: **Escalate.** No need for consultation.
+* **Example 2: Failed logon from a disabled user.** There is zero legitimate reason for a disabled account to have a logon attempt. This strongly suggests an attacker is using a list of old, known credentials.
+    * **Action**: **Escalate.** This is a clear security event.
+* **Example 3: SSH login as `root` on a Linux server.** Your notes say the root account is blocked from remote login. Seeing an alert for this means a critical security control has failed or been bypassed.
+    * **Action**: **Escalate.** This is an immediate, high-priority incident.
+
+#### ✅ When to choose "Nothing Suspicious"
+
+Choose this path only when you can confidently say the activity is **100% expected and aligns with all known policies and procedures.** In a real-world scenario, this is common. In a security challenge, it's rare.
+* **Your Goal**: Close the alert because it represents normal, sanctioned behavior.
+* **Example**: An alert shows an administrator successfully logged into a domain controller from the designated Privileged Admin Workstation (PAW) during normal business hours. This is exactly what is supposed to happen.
+    * **Action**: Acknowledge and close the alert.
+
+
+---
+
+## 7. Kibana Caveats & Gotchas
+
+This section documents non-obvious behaviors and common pain points that can cost you time during a challenge.
+
+### Incorrect Dates in Tables: The Date Bucketing Pitfall
+
+* **The Problem**: You create a table visualization to show events over time. You add the `@timestamp` column, but the date shown is clearly wrong (e.g., your table shows `2023-02-27`, but you know the event happened on `2023-03-05`).
+
+* **The Cause**: To keep tables readable, Kibana automatically groups data into time "buckets." If the time range is wide, it might create large buckets (e.g., 7 days, 30 days). It then labels the entire row with the **start date of the bucket**, not the date of the actual event inside it. Your event on March 5th fell into a bucket that started on Feb 27th, so the table misleadingly showed Feb 27th.
+
+* **The Solution**: You must force Kibana to use 1-day buckets.
+    1.  In the visualization editor, when configuring the `@timestamp` column, ensure the aggregation is set to **Top Hit**.
+    2.  Just below the field selection, a toggle for **"Customize time interval"** will appear. Enable it.
+    3.  Set the **"Minimum Interval"** to **1** and select **"Day(s)"** from the dropdown.
+    4.  Apply the changes. The table will now be forced to show the correct date for each event.
+
+* **Troubleshooting**: If the fix above doesn't work, check the dashboard's main **Time Picker** (top-right of the screen). If it's set to a narrow range (like "Today"), it might be excluding the event entirely. Widen it to "Last 5 years" or an absolute range to be sure you are seeing all the data.
+
+---
+
+## 8. External Resources
+
+* [Ultimate Windows Security Encyclopedia](https://www.ultimatewindowssecurity.com/securitylog/encyclopedia/Default.aspx): The best resource for looking up any Event ID.
+* [Microsoft Security Auditing Documentation](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/plan/security-audit-events): Official documentation from Microsoft.
 
