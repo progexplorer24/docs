@@ -1,4 +1,5 @@
 export default {
+  index: 'Home',
   'blue-team': 'Blue Team',
   'red-team': 'Red Team',
   devops: 'DevOps',
