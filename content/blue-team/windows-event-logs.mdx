@@ -3,3 +3,141 @@ title: Windows Event Logs & Finding Evil
 sidebarTitle: Windows Event Logs & Finding Evil
 description: Techniques for analyzing Windows event logs to detect malicious activity.
 ---
+
+# Windows Event Log
+
+This document provides foundational and practical knowledge for analyzing Windows Event Logs from a cybersecurity perspective. The focus is on understanding the log structure, key event IDs, and leveraging powerful query techniques.
+
+---
+
+## 1. Windows Event Log Fundamentals
+
+Windows Event Logs are the primary record-keeping mechanism of the operating system. For a SOC analyst, they are a critical source of truth for investigating security incidents, troubleshooting issues, and hunting for threats.
+
+### Log Categories
+
+Windows organizes logs into several default categories. The most important ones for security analysis are:
+
+* **Security**: The most critical log for a SOC analyst. It contains events related to security, such as logon attempts (successful and failed), privilege changes, and object access. This log is configured via Audit Policies.
+* **Application**: Contains logs from applications running on the system. Application errors seen here can sometimes indicate security issues, such as a buffer overflow attempt causing a crash.
+* **System**: Contains events logged by Windows system components, such as driver failures or services starting and stopping. A service failing to start or an unexpected reboot could be signs of malicious activity.
+* **Setup**: Contains events related to the installation and setup of Windows and its components.
+* **Forwarded Events**: A centralized log that contains events collected from other computers on the network.
+
+### The Anatomy of an Event
+
+Each log entry is an "Event" with a standardized structure. Understanding these components is key to interpreting the data.
+
+| Component | Description |
+| :--- | :--- |
+| **Log Name** | The category the event belongs to (e.g., `Security`). |
+| **Source** | The software or component that generated the event (e.g., `Microsoft-Windows-Security-Auditing`). |
+| **Event ID** | A unique number identifying the specific event type. **This is the most important field for filtering.** |
+| **Level** | The severity of the event (e.g., `Information`, `Warning`, `Error`). In the Security log, this is usually `Audit Success` or `Audit Failure`. |
+| **User** | The user account that triggered the event. Can be `SYSTEM` for system-level actions. |
+| **Logged** | The timestamp when the event was recorded. |
+| **Computer** | The name of the computer where the event occurred. |
+| **XML Data** | The full event details in XML format. This contains rich, specific data not visible in the summary view, such as source IP addresses or specific privileges. |
+
+---
+
+## 2. Practical Analysis with Event Viewer
+
+While GUIs are useful, the real power for a SOC analyst comes from building precise filters.
+
+### Writing Custom XML Queries (XPath)
+
+The most powerful way to filter logs in Event Viewer is by writing custom XML queries. This allows you to pinpoint events with extreme precision, something that is impossible with the standard UI filters.
+
+You can access it via **Filter Current Log...** -> **XML** tab -> **Edit query manually**.
+
+The basic structure looks like this:
+
+```xml
+    <QueryList>
+      <Query Id="0" Path="Security">
+        <Select Path="Security">
+            *[System[EventID=4624]]
+            and
+            *[EventData[Data[@Name='TargetUserName']='JohnDoe']]
+        </Select>
+      </Query>
+    </QueryList>
+```
+
+**Key parts to understand:**
+* `<Select Path="Security">`: Specifies which log you are querying (e.g., `Security`, `System`, `Application`).
+* `*[System[...]]`: This part filters on the general event properties, like `EventID`.
+* `*[EventData[...]]`: This part filters on the specific, detailed data inside the event's XML view. `Data[@Name='FieldName']` is how you target a specific piece of data.
+
+#### Practical Query Examples
+
+| Goal | XML Query Snippet (Place inside `<Select>...</Select>`) |
+| :--- | :--- |
+| **Find all failed logons (4625) for a specific user.** | `*[System[EventID=4625]] and *[EventData[Data[@Name='TargetUserName']='someuser']]` |
+| **Find successful RDP logons (Type 10).** | `*[System[EventID=4624]] and *[EventData[Data[@Name='LogonType']='10']]` |
+| **Find events related to a specific logon session.** | `*[EventData[Data[@Name='SubjectLogonId']='0x3e7']]` |
+| **Find when a specific service was installed.** | `*[System[EventID=7045]] and *[EventData[Data[@Name='ServiceName']='EvilSvc']]` |
+| **Find when a specific scheduled task was created.** | `*[System[EventID=4698]] and *[EventData[Data[@Name='TaskName']='\SomeMaliciousTask']]`|
+
+---
+
+## 3. Key Concepts for Deeper Investigation
+
+Some events contain complex data that requires deeper knowledge to interpret.
+
+### SACL, ACL, and SDDL
+
+These concepts relate to object permissions and auditing.
+
+* **ACL (Access Control List)**: A list of permissions attached to an object (like a file or registry key). It answers the question: "**Who can do what?**"
+* **SACL (System Access Control List)**: A special list that controls **auditing**. It answers the question: "**Whose actions should be logged?**" If an action matches an entry in the SACL, a security event is generated.
+* **SDDL (Security Descriptor Definition Language)**: A text format used to represent all these permissions (ACLs and SACLs). When you see `NewSd` or `OldSd` in an event, it's showing you the permissions in SDDL format.
+
+### Special Privileges (Tokens)
+
+When a user logs on, their session is granted a set of "privileges" in an access token. Most are standard, but some are highly sensitive and should be monitored closely.
+
+* **Event ID 4672 (Special privileges assigned to new logon)** alerts you when an account logs on with these high-level rights.
+* **`SeDebugPrivilege`** is one of the most critical. It allows a user to inspect and modify the memory of other processes, a common technique used by malware (e.g., Mimikatz) to steal credentials. An unexpected process running with this privilege is a major red flag.
+
+---
+
+## 4. Important Windows Event IDs
+
+This is a reference list of event IDs that are particularly useful for security monitoring.
+
+### Security Logs
+
+| Event ID | Event Name | Why It's Important for a SOC Analyst |
+| :--- | :--- | :--- |
+| **1102** | The audit log was cleared | **Red Flag.** Common attacker technique to cover tracks. Should always be investigated. |
+| **4624** | An account was successfully logged on | Baseline for normal user activity. Look for anomalies (off-hours, unusual hosts). |
+| **4625** | An account failed to log on | High numbers can indicate a brute-force attack. |
+| **4648** | Logon with explicit credentials | Key indicator of **lateral movement** (e.g., `runas` command). |
+| **4672** | Special privileges assigned to new logon | Alerts that a highly privileged session has started. Monitor for abuse. |
+| **4698** | A scheduled task was created | Common **persistence mechanism** for attackers. |
+| **4719** | System audit policy was changed | Attacker may be trying to disable logging to avoid detection. |
+| **4738** | A user account was changed | Monitor for unauthorized privilege escalation or changes. |
+| **4776** | Domain controller credential validation | Tracks authentication attempts against the DC. Failures can indicate brute-forcing. |
+| **5140** | A network share object was accessed | Monitor for unauthorized access to sensitive file shares. |
+| **7045** | A new service was installed | Attackers often install malware as a service for persistence. |
+
+### System Logs
+
+| Event ID | Event Name | Why It's Important for a SOC Analyst |
+| :--- | :--- | :--- |
+| **6005** | Event Log service started | Marks a system boot. Correlate with other events to investigate reboots. |
+| **6006** | Event Log service stopped | Marks a system shutdown. Unexpected shutdowns can indicate a crash or malicious action. |
+| **7040** | Service startup type changed | An attacker might change a service from "Disabled" to "Automatic" for persistence. |
+
+---
+
+## 5. External Resources
+
+* [Advanced XML filtering in the Windows Event Viewer](https://techcommunity.microsoft.com/blog/askds/advanced-xml-filtering-in-the-windows-event-viewer/399761)
+* [Microsoft Docs: Event 4907 (Audit Policy Change)](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-4907)
+* [Microsoft Docs: Audit Generation & SACLs](https://learn.microsoft.com/en-us/windows/win32/secauthz/audit-generation)
+* [Microsoft Docs: SACL Access Rights](https://learn.microsoft.com/en-us/windows/win32/secauthz/sacl-access-right)
+* [Microsoft Docs: ACE Strings in SDDL](https://learn.microsoft.com/en-us/windows/win32/secauthz/ace-strings?redirectedfrom=MSDN)
+* [Understanding SDDL Syntax](https://uwconnect.uw.edu/it?id=kb_article_view&sysparm_article=KB0034194)
