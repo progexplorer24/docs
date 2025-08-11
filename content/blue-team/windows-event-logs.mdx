@@ -133,7 +133,232 @@ This is a reference list of event IDs that are particularly useful for security 
 
 ---
 
-## 5. External Resources
+## 5. Sysmon: Advanced Threat Detection
+
+While standard Windows logs are useful, **System Monitor (Sysmon)** provides much deeper visibility into system activity. It's a Windows system service and driver that logs advanced process, network, and file activity to its own event channel. For a SOC analyst, Sysmon is an indispensable tool for threat hunting.
+
+### Installation & Configuration
+
+Sysmon is not installed by default. You must install it manually from an administrator command prompt.
+
+* **Installation Command**: This command installs the service with a good baseline for hashing and logging.
+    `sysmon.exe -i -accepteula -h md5,sha256,imphash -l -n`
+* **Applying a Configuration**: Sysmon's true power comes from using a detailed XML configuration file to filter out noise and focus on suspicious events.
+    `sysmon.exe -c your_config_file.xml`
+* **Recommended Configurations**:
+    * **SwiftOnSecurity/sysmon-config**: A comprehensive, well-regarded configuration that is excellent for general-purpose use.
+    * **olafhartong/sysmon-modular**: A modular approach that allows you to piece together a configuration that fits your specific needs.
+
+### Key Sysmon Event IDs for Threat Hunting
+
+Sysmon generates many types of events. These are some of the most critical for security analysis.
+
+
+| Event ID | Event Name | Use Case for a SOC Analyst 🕵️ |
+| :--- | :--- | :--- |
+| **1** | Process Creation | The most fundamental event. Provides command-line details for every process started. |
+| **3** | Network Connection | Tracks every outbound network connection, showing which process initiated it. |
+| **7** | Image Load | Tracks when a process loads a DLL. Crucial for detecting DLL hijacking and code injection. |
+| **8** | Create Remote Thread | Detects when one process injects a thread into another. A core technique for malware. |
+| **9** | Raw Access Read | Detects reading from a drive's raw sectors, often used to bypass file access controls. |
+| **10** | Process Access | Tracks when one process accesses another. Key for detecting credential dumping against `lsass.exe`. |
+| **11** | File Create | Can be used to track when malware drops files to disk in sensitive locations. |
+| **12, 13, 14**| Registry Events | Monitors for changes to registry keys and values, especially persistence locations. |
+| **15** | File Create Stream Hash | Logs the creation of Alternate Data Streams (ADS), often used by browsers to mark downloaded files. |
+| **17, 18** | Pipe Events | Logs named pipe creation and connection, used by malware for inter-process communication. |
+| **19, 20, 21**| WMI Events | Tracks the creation of WMI filters and consumers, a common persistence technique. |
+| **22** | DNS Query | Logs all DNS queries made by a process. Excellent for identifying connections to malicious domains. |
+
+### Detection Recipes & IOCs
+
+Here are practical recipes for detecting common attack techniques using Sysmon data.
+
+#### Recipe 1: Detecting DLL Hijacking
+
+* **Threat**: An attacker tricks a legitimate application into loading a malicious DLL by placing it in the same directory as a copy of the application.
+* **Key Sysmon Event**: `Event ID 7 (ImageLoad)`
+* **Common Indicators of Compromise (IOCs)**:
+    * A legitimate Windows process (e.g., `calc.exe`) has an `Image` path in an unusual location, like a user's `Desktop` or `Downloads` folder.
+    * A well-known system DLL (e.g., `WININET.dll`) is loaded from that same unusual path, instead of from `C:\Windows\System32\`.
+    * The `Signature` of the loaded DLL is `Unsigned`, when the legitimate version is signed by Microsoft.
+
+#### Recipe 2: Detecting Unmanaged Code Injection
+
+* **Threat**: An attacker injects .NET or PowerShell code into a process that does not normally run it. This is a common fileless attack technique.
+* **Key Sysmon Event**: `Event ID 7 (ImageLoad)`
+* **Common Indicators of Compromise (IOCs)**:
+    * An `Image` that is normally unmanaged (e.g., `spoolsv.exe`, `explorer.exe`, `notepad.exe`) loads .NET runtime modules.
+    * Look for an `ImageLoaded` path containing **`clr.dll`** or **`clrjit.dll`** in these unexpected processes.
+
+#### Recipe 3: Detecting Credential Dumping (LSASS Access)
+
+* **Threat**: An attacker uses a tool like Mimikatz to access the memory of the **Local Security Authority Subsystem Service (LSASS)** to steal passwords and hashes.
+* **Key Sysmon Event**: `Event ID 10 (ProcessAccess)`
+* **Common Indicators of Compromise (IOCs)**:
+    * The `TargetImage` is `C:\Windows\System32\lsass.exe`.
+    * The `SourceImage` (the process accessing LSASS) is an unknown executable, `powershell.exe`, or any process running from a temporary or user-writable location.
+    * The `GrantedAccess` code indicates a request for powerful permissions needed to read memory. Look for codes like `0x1010` or `0x1410`.
+
+---
+
+## 6. Event Tracing for Windows (ETW): Deeper Telemetry
+
+While Sysmon is powerful, it is built on top of a more fundamental Windows technology: **Event Tracing for Windows (ETW)**. ETW is a high-speed, kernel-level tracing facility that provides incredibly detailed information about system and application activity, far beyond what standard event logs capture.
+
+### Core ETW Concepts
+
+ETW operates on a publish-subscribe model. Understanding its components helps you know what's possible to monitor.
+
+* **Providers**: These are the source of the data. OS components (like the kernel), applications, and drivers (like Sysmon) register as providers to generate specific events. Windows has over 1,000 built-in providers.
+* **Controllers**: These start and stop event tracing sessions, telling providers to start or stop sending events. The built-in `logman.exe` is a primary example.
+* **Consumers**: These subscribe to one or more sessions to process the events. A consumer could be a security tool (like an EDR agent) or a process that writes events to an `.etl` log file for offline analysis.
+
+### Practical Interaction with `logman.exe`
+
+The `logman.exe` command-line utility is the primary built-in tool for interacting with ETW sessions.
+
+1.  **List Active Sessions**: To see what is currently being traced on a system, use the `query -ets` command. This can reveal monitoring tools (like Sysmon) or potentially suspicious custom tracing sessions.
+    `logman.exe query -ets`
+
+2.  **Inspect a Specific Session**: To see which providers are feeding into a specific session, query it by name. This shows you exactly what data is being collected.
+    `logman.exe query "EventLog-System" -ets`
+
+3.  **Discover Available Providers**: To see all providers registered on the system, use the `query providers` command. Since the list is huge, it's best to pipe it to `findstr` to search for something specific.
+    `logman.exe query providers | findstr /i "PowerShell"`
+
+### Key ETW Providers for Security
+
+While there are thousands of providers, some are exceptionally valuable for security monitoring.
+
+| Provider Name | Why It's Important for a SOC Analyst 🕵️ |
+| :--- | :--- |
+| **Microsoft-Windows-Kernel-Process** | Provides granular detail on process and thread creation/termination. |
+| **Microsoft-Windows-Kernel-Network** | Offers visibility into network activity at the kernel level, including TCP/IP events. |
+| **Microsoft-Windows-Kernel-Registry** | Monitors registry operations, useful for detecting persistence and configuration changes. |
+| **Microsoft-Windows-PowerShell** | The primary source for detailed PowerShell script block logging and module loading. |
+| **Microsoft-Windows-DNS-Client** | Gives visibility into DNS client activity, crucial for detecting C2 communication and DNS tunneling. |
+| **Microsoft-Windows-Threat-Intelligence** | **(Restricted)** A high-value provider that logs extremely suspicious activity like `WriteProcessMemory` calls, but requires special permissions (Protected Process Light - PPL) to be consumed. EDRs and AV products often use this. |
+| **Microsoft-Windows-Security-Mitigations** | Tracks the operations of security mitigations (like EMET or Windows Defender Exploit Guard), which can identify bypass attempts. |
+| **OpenSSH** | If used, this provider offers insights into SSH connection attempts and authentication. |
+
+---
+
+## PowerShell for Log Analysis
+
+While the Event Viewer GUI is useful for quick checks, analyzing logs in bulk for threat hunting or incident response requires a more powerful and scriptable approach. **PowerShell**, and specifically the `Get-WinEvent` cmdlet, is the industry-standard tool for this.
+
+### Discovering Logs and Providers
+
+Before you can query logs, you need to know what's available.
+
+* **List All Available Logs**: Use the `-ListLog *` parameter to get a complete list of log channels on the system.
+
+    ```powershell
+    Get-WinEvent -ListLog * | Select-Object LogName, RecordCount, IsEnabled | Format-Table -AutoSize
+    ```
+
+* **List All Event Providers**: Use the `-ListProvider *` parameter to see all sources that can generate events.
+
+    ```powershell
+    Get-WinEvent -ListProvider * | Select-Object Name, LogLinks | Format-Table -AutoSize
+    ```
+
+### Basic Event Retrieval
+
+You can pull events from either live system logs or offline `.evtx` files.
+
+* **From a Live Log**: Use the `-LogName` parameter. The `-MaxEvents` parameter is useful to limit output.
+
+    ```powershell
+    # Get the 10 most recent Security log events
+    Get-WinEvent -LogName 'Security' -MaxEvents 10
+    ```
+
+* **From an Offline `.evtx` File**: Use the `-Path` parameter. This is essential for forensics and analyzing logs from other machines.
+
+    ```powershell
+    # Get the 10 most recent events from an exported Sysmon log file
+    Get-WinEvent -Path 'C:\IR\logs\sysmon.evtx' -MaxEvents 10
+    ```
+
+* **Getting the Oldest Events**: To view events chronologically, add the `-Oldest` switch.
+
+    ```powershell
+    # Get the first 10 events from the System log
+    Get-WinEvent -LogName 'System' -Oldest -MaxEvents 10
+    ```
+
+### High-Performance Filtering (Server-Side)
+
+Filtering events *before* they are returned to PowerShell is vastly more efficient than pulling everything and filtering it later. **Always use one of these methods when possible.**
+
+#### Using `-FilterHashtable` (Recommended Method)
+
+This is the easiest, most readable, and highly efficient way to filter events. You create a PowerShell hash table (a key-value dictionary) to define your filter criteria.
+
+**Common Keys for `-FilterHashtable`:**
+
+| Key | Description | Example Value |
+| :--- | :--- | :--- |
+| `LogName` | The name of the event log channel. | `'Security'` or `'Microsoft-Windows-Sysmon/Operational'` |
+| `ProviderName`| The name of the event provider. | `'Microsoft-Windows-Sysmon'` |
+| `ID` | The Event ID. Can be a single ID or an array. | `4625` or `@(1, 3, 10)` |
+| `StartTime` | The start of a date range. | `(Get-Date).AddDays(-7)` |
+| `EndTime` | The end of a date range. | `(Get-Date)` |
+| `Path` | The path to an `.evtx` file for offline analysis. | `'C:\IR\logs\sysmon.evtx'` |
+
+**Example 1: Find Sysmon Process Create and Network Connection events.**
+
+```powershell
+$filter = @{
+    LogName = 'Microsoft-Windows-Sysmon/Operational'
+    ID = 1, 3
+}
+Get-WinEvent -FilterHashtable $filter | Select-Object TimeCreated, ID, Message
+```
+
+**Example 2: Find failed logons in the last 24 hours.**
+
+```powershell
+$filter = @{
+    LogName = 'Security'
+    ID = 4625
+    StartTime = (Get-Date).AddDays(-1)
+}
+Get-WinEvent -FilterHashtable $filter | Select-Object TimeCreated, Message
+```
+
+**Using `-FilterXml` and `-FilterXPath`**
+
+For complex queries that a hash table cannot handle (like complex OR conditions on event data), you can use XML-based filters.
+
+* `-FilterXml`: This method uses the same XML query structure as the Event Viewer GUI.
+
+  **Example: Find Sysmon events for suspicious DLLs being loaded.**
+
+  ```powershell
+  $xmlQuery = @"
+  <QueryList>
+    <Query>
+      <Select Path="Microsoft-Windows-Sysmon/Operational">
+        *[System[EventID=7]] and 
+        (*[EventData[Data='mscoree.dll']] or *[EventData[Data='clr.dll']])
+      </Select>
+    </Query>
+  </QueryList>
+  "@
+  Get-WinEvent -FilterXml $xmlQuery
+  ```
+
+* `-FilterXPath`: This method uses the XPath query language for more concise, powerful filters.
+
+  **Example: Find network connections (Sysmon ID 3) to a specific suspicious IP.**
+  ```powershell
+  $xPath = "*[System[EventID=3] and EventData[Data[@Name='DestinationIp']='52.113.194.132']]"
+  Get-WinEvent -LogName 'Microsoft-Windows-Sysmon/Operational' -FilterXPath $xPath
+  ```
+
+## 7. External Resources
 
 * [Advanced XML filtering in the Windows Event Viewer](https://techcommunity.microsoft.com/blog/askds/advanced-xml-filtering-in-the-windows-event-viewer/399761)
 * [Microsoft Docs: Event 4907 (Audit Policy Change)](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-4907)
@@ -141,3 +366,12 @@ This is a reference list of event IDs that are particularly useful for security 
 * [Microsoft Docs: SACL Access Rights](https://learn.microsoft.com/en-us/windows/win32/secauthz/sacl-access-right)
 * [Microsoft Docs: ACE Strings in SDDL](https://learn.microsoft.com/en-us/windows/win32/secauthz/ace-strings?redirectedfrom=MSDN)
 * [Understanding SDDL Syntax](https://uwconnect.uw.edu/it?id=kb_article_view&sysparm_article=KB0034194)
+* [Microsoft Docs: Sysmon](https://docs.microsoft.com/en-us/sysinternals/downloads/sysmon)
+* [Blog Post: Exhaustive List of DLL Hijack Techniques](https://www.wietzebeukema.nl/blog/hijacking-dlls-in-windows)
+* [GitHub: SwiftOnSecurity Sysmon Config](https://github.com/SwiftOnSecurity/sysmon-config)
+* [GitHub: OlafHartong Sysmon Modular Config](https://github.com/olafhartong/sysmon-modular)
+* **ETW Primers**:
+    * [A Primer on Event Tracing for Windows (ETW)](https://nasbench.medium.com/a-primer-on-event-tracing-for-windows-etw-997725c082bf)
+    * [A Beginner's All-Inclusive Guide to ETW](https://bmcder.com/blog/a-begginers-all-inclusive-guide-to-etw)
+* **Threat Intelligence ETW**:
+    * [Uncovering Windows Events](https://posts.jona.io/threat-intel/2023-03-15-ti-etw.html)
